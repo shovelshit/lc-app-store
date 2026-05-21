@@ -25,16 +25,19 @@ jobs:
       - name: Install javascript-obfuscator
         run: npm install -g javascript-obfuscator
 
-      - name: Extract & Obfuscate JS
+      - name: Extract JS from HTML
         run: |
-          node -e "
-            const fs = require('fs');
-            const html = fs.readFileSync('store.html', 'utf8');
-            const match = html.match(/<script>([\s\S]*?)<\/script>/);
-            if (!match) { console.error('No <script> found'); process.exit(1); }
-            fs.writeFileSync('/tmp/source.js', match[1]);
-            console.log('JS extracted, size:', match[1].length);
-          "
+          node << 'SCRIPT'
+          const fs = require('fs');
+          const html = fs.readFileSync('store.html', 'utf8');
+          const match = html.match(/<script>([\s\S]*?)<\/script>/);
+          if (!match) { console.error('No <script> block found'); process.exit(1); }
+          fs.writeFileSync('/tmp/source.js', match[1]);
+          console.log('JS extracted, size:', match[1].length);
+          SCRIPT
+
+      - name: Obfuscate JS
+        run: |
           javascript-obfuscator /tmp/source.js \
             --output /tmp/obfuscated.js \
             --compact true \
@@ -49,21 +52,29 @@ jobs:
 
       - name: Assemble index.html
         run: |
-          node -e "
-            const fs = require('fs');
-            const html = fs.readFileSync('store.html', 'utf8');
-            const obfJs = fs.readFileSync('/tmp/obfuscated.js', 'utf8');
-            const result = html.replace(/<script>([\s\S]*?)<\/script>/, '<script>' + obfJs + '<\/script>');
-            fs.writeFileSync('index.html', result);
-            console.log('index.html assembled, size:', result.length);
-          "
+          node << 'SCRIPT'
+          const fs = require('fs');
+          const html = fs.readFileSync('store.html', 'utf8');
+          const obfJs = fs.readFileSync('/tmp/obfuscated.js', 'utf8');
+          const result = html.replace(/<script>([\s\S]*?)<\/script>/, '<script>' + obfJs + '<\/script>');
+          fs.writeFileSync('index.html', result);
+          console.log('index.html assembled, size:', result.length);
+          SCRIPT
 
-      - name: Commit & Push index.html
+      - name: Generate _redirects (Cloudflare Pages proxy)
+        run: |
+          cat > _redirects << 'EOF'
+          /api/*  http://appstore.cnmlynk.org/api/:splat  200
+          EOF
+          echo "_redirects generated:"
+          cat _redirects
+
+      - name: Commit & Push
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add index.html
+          git add index.html _redirects
           # 仅在有变更时提交，避免空提交
           git diff --cached --quiet && echo "No changes, skip commit" || \
-            git commit -m "chore: auto-build obfuscated index.html [skip ci]"
+            git commit -m "chore: auto-build obfuscated index.html + proxy redirects [skip ci]"
           git push
