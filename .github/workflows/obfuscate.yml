@@ -61,20 +61,46 @@ jobs:
           console.log('index.html assembled, size:', result.length);
           SCRIPT
 
-      - name: Generate _redirects (Cloudflare Pages proxy)
+      - name: Generate Cloudflare Pages Function (API proxy)
         run: |
-          cat > _redirects << 'EOF'
-          /api/*  http://appstore.cnmlynk.org/api/:splat  200
+          mkdir -p functions/api
+          cat > functions/api/[[path]].js << 'EOF'
+          const UPSTREAM_BASE = 'http://appstore.cnmlynk.org/api';
+
+          export async function onRequest(context) {
+            const url = new URL(context.request.url);
+            // 拼接上游 URL：/api/fs/list -> http://appstore.cnmlynk.org/api/fs/list
+            const upstreamUrl = UPSTREAM_BASE + url.pathname.replace(/^\/api/, '') + url.search;
+
+            const response = await fetch(upstreamUrl, {
+              method: context.request.method,
+              headers: context.request.headers,
+              body: context.request.method !== 'GET' && context.request.method !== 'HEAD'
+                ? context.request.body
+                : undefined,
+            });
+
+            const newHeaders = new Headers(response.headers);
+            newHeaders.set('Access-Control-Allow-Origin', '*');
+            newHeaders.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+            newHeaders.set('Access-Control-Allow-Headers', 'Content-Type');
+
+            return new Response(response.body, {
+              status: response.status,
+              statusText: response.statusText,
+              headers: newHeaders,
+            });
+          }
           EOF
-          echo "_redirects generated:"
-          cat _redirects
+          echo "Pages Function generated:"
+          cat functions/api/[[path]].js
 
       - name: Commit & Push
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add index.html _redirects
+          git add index.html functions/
           # 仅在有变更时提交，避免空提交
           git diff --cached --quiet && echo "No changes, skip commit" || \
-            git commit -m "chore: auto-build obfuscated index.html + proxy redirects [skip ci]"
+            git commit -m "chore: auto-build index.html + pages function proxy [skip ci]"
           git push
